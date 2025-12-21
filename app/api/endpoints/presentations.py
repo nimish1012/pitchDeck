@@ -47,7 +47,12 @@ async def create_presentation_from_document(
         file_content = await file.read()
         
         # Process document
-        document_text = await document_processor.process_document(file_content, file.filename)
+        extraction_result = await document_processor.process_document(file_content, file.filename)
+        
+        # Extract content and metadata
+        document_text = extraction_result.get('content', '')
+        images = extraction_result.get('images', [])
+        metadata = extraction_result.get('metadata', {})
         
         # Create request object
         request = DocumentPresentationRequest(
@@ -56,7 +61,9 @@ async def create_presentation_from_document(
             additional_text=additional_text,
             theme=theme,
             output_format=output_format,
-            max_slides=max_slides
+            max_slides=max_slides,
+            extracted_images=images,
+            document_metadata=metadata
         )
         
         # Generate presentation

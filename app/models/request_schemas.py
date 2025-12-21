@@ -18,6 +18,8 @@ class DocumentPresentationRequest(PresentationRequest):
     """Request for document-based presentation"""
     additional_text: Optional[str] = Field(None, description="Additional instructions or context")
     max_slides: Optional[int] = Field(10, description="Maximum number of slides")
+    extracted_images: Optional[List[Dict[str, Any]]] = Field(None, description="Images extracted from document")
+    document_metadata: Optional[Dict[str, Any]] = Field(None, description="Metadata from document processing")
     
 class PromptPresentationRequest(PresentationRequest):
     """Request for prompt-based presentation"""
