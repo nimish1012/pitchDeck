@@ -1,11 +1,14 @@
 import os
 import tempfile
 import asyncio
+import logging
 from typing import Optional, List, Dict, Any
 from pathlib import Path
 import base64
 import uuid
 from datetime import datetime
+
+logger = logging.getLogger(__name__)
 
 # Marker imports for advanced document processing
 try:
@@ -15,7 +18,7 @@ try:
     MARKER_AVAILABLE = True
 except ImportError:
     MARKER_AVAILABLE = False
-    print("Warning: marker library not available. Install with: pip install marker-pdf")
+    logger.warning("marker library not available. Install with: pip install marker-pdf")
 
 
 class DocumentProcessor:
@@ -34,9 +37,9 @@ class DocumentProcessor:
                 self.converter = PdfConverter(
                     artifact_dict=create_model_dict(),
                 )
-                print("Marker PDF converter initialized successfully")
+                logger.info("Marker PDF converter initialized successfully")
             except Exception as e:
-                print(f"Failed to initialize marker converter: {e}")
+                logger.error(f"Failed to initialize marker converter: {e}")
                 self.converter = None
     
     def validate_file(self, filename: str, file_size: int) -> bool:
@@ -222,7 +225,7 @@ class DocumentProcessor:
                 extracted_images.append(image_info)
                 
             except Exception as e:
-                print(f"Error processing image {i}: {e}")
+                logger.error(f"Error processing image {i}: {e}")
                 continue
         
         return extracted_images

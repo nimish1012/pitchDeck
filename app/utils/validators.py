@@ -1,5 +1,6 @@
 from typing import List, Dict, Any, Optional
 import re
+import os
 from pathlib import Path
 
 class PresentationValidator:

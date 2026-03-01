@@ -30,12 +30,13 @@ def test_document_processor():
 
 def test_text_processing():
     """Test text file processing"""
+    import asyncio
     processor = DocumentProcessor()
     
     # Test text content
     text_content = b"Hello, world! This is a test."
-    result = processor._process_text_file(text_content)
-    assert "Hello, world!" in result
+    result = asyncio.run(processor._process_text_file(text_content, "test.txt"))
+    assert "Hello, world!" in result["content"]
 
 def test_validators():
     """Test validation functions"""

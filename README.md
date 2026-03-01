@@ -1,308 +1,155 @@
 # AI Presentation Generator
 
-A FastAPI-based web service that generates presentations using AI from three different input methods:
-1. Document upload with additional text
-2. One-liner prompt
-3. Pre-structured outline
+A FastAPI backend that generates presentations from documents, prompts, or outlines using a multi-stage LLM pipeline with parallel slide generation.
 
-## Features
+## How It Works
 
-- 🚀 **FastAPI Framework**: High-performance async API with automatic OpenAPI documentation
-- 📄 **Multiple Input Methods**: Support for documents, prompts, and structured outlines
-- 🤖 **AI-Powered Generation**: Integration-ready for various AI services (OpenAI, Anthropic, etc.)
-- 📁 **File Processing**: Support for PDF, DOCX, TXT, and MD files
-- 🔒 **Input Validation**: Comprehensive validation for all inputs
-- 📊 **Structured Output**: Consistent presentation data structure
-- 🌐 **CORS Enabled**: Ready for frontend integration
+All three input methods follow the same pattern: **Analyse → Generate slides in parallel → JSON response**.
+
+| Input | Endpoint | Stages |
+|---|---|---|
+| **Document** (PDF/TXT/MD) | `POST /api/v1/presentations/document` | Extract text → LLM breaks into sections → parallel slide generation |
+| **Prompt** (one-liner) | `POST /api/v1/presentations/prompt` | LLM analyses intent → generates outline + TOC → parallel slide generation |
+| **Outline** (structured JSON) | `POST /api/v1/presentations/outline` | LLM analyses outline → enriches each slide in parallel |
+
+Each slide is returned as structured JSON with `title`, `content` (bullet points), `notes` (speaker notes), and `layout`.
 
 ## Project Structure
 
 ```
-presentation-generator/
-├── app/
-│   ├── __init__.py
-│   ├── main.py                    # FastAPI application entry point
-│   ├── api/
-│   │   ├── __init__.py
-│   │   └── endpoints/
-│   │       ├── __init__.py
-│   │       ├── presentations.py   # Main presentation endpoints
-│   │       └── health.py          # Health check endpoints
-│   ├── core/
-│   │   ├── __init__.py
-│   │   └── config.py              # Application configuration
-│   ├── models/
-│   │   ├── __init__.py
-│   │   └── request_schemas.py     # Pydantic models for requests/responses
-│   ├── services/
-│   │   ├── __init__.py
-│   │   ├── presentation_generator.py  # AI presentation generation logic
-│   │   └── document_processor.py     # Document file processing
-│   └── utils/
-│       ├── __init__.py
-│       ├── file_handler.py       # File upload handling
-│       └── validators.py         # Input validation utilities
-├── requirements.txt               # Python dependencies
-├── README.md                     # This file
-└── .env.example                  # Environment variables template
+app/
+├── main.py                          # FastAPI app, CORS, router mounting
+├── core/config.py                   # Settings via pydantic-settings (.env)
+├── api/endpoints/
+│   ├── presentations.py             # Document, prompt, outline endpoints
+│   └── health.py                    # Health check
+├── models/request_schemas.py        # All Pydantic models (request, response, pipeline)
+├── services/
+│   ├── presentation_generator.py    # 3 generators (Document, Prompt, Outline)
+│   ├── document_processor.py        # PDF extraction via marker-pdf, txt/md parsing
+│   ├── llm_client.py                # Async OpenAI wrapper with JSON mode + retry
+│   └── prompts.py                   # All prompt templates for every pipeline stage
+└── utils/
+    ├── validators.py                # Input validation utilities
+    └── file_handler.py              # File I/O helpers
 ```
 
-## Installation
+## Quick Start
 
-1. **Clone the repository**
-   ```bash
-   git clone <repository-url>
-   cd presentation-generator
-   ```
+```bash
+# 1. Install
+python -m venv venv && venv\Scripts\activate
+pip install -r requirements.txt
 
-2. **Create a virtual environment**
-   ```bash
-   python -m venv venv
-   source venv/bin/activate  # On Windows: venv\Scripts\activate
-   ```
+# 2. Configure
+copy .env.example .env
+# Edit .env → set OPENAI_API_KEY
 
-3. **Install dependencies**
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-4. **Set up environment variables**
-   ```bash
-   cp .env.example .env
-   # Edit .env file with your configuration
-   ```
-
-5. **Run the application**
-   ```bash
-   python app/main.py
-   ```
-
-The API will be available at `http://localhost:8000`
-
-## API Endpoints
-
-### Health Check
-- `GET /api/v1/health` - Basic health check
-- `GET /api/v1/status` - Detailed service status
-
-### Presentation Generation
-
-#### 1. Document Upload
-```http
-POST /api/v1/presentations/document
-Content-Type: multipart/form-data
-
-file: [PDF/DOCX/TXT/MD file]
-title: "Optional presentation title"
-additional_text: "Optional additional instructions"
-theme: "default"  # or custom theme
-max_slides: 10
-output_format: "pptx"  # pptx, pdf, html
+# 3. Run
+python run.py
 ```
 
-#### 2. Prompt-Based
-```http
-POST /api/v1/presentations/prompt
-Content-Type: application/x-www-form-urlencoded
+API docs at http://localhost:8000/docs
 
-prompt: "Explain the benefits of renewable energy"
-title: "Renewable Energy Benefits"
-theme: "default"
-max_slides: 10
-output_format: "pptx"
-target_audience: "general"
-```
+## API Usage
 
-#### 3. Outline-Based
-```http
-POST /api/v1/presentations/outline
-Content-Type: application/json
-
-{
-  "outline": [
-    {
-      "title": "Introduction",
-      "content": ["Point 1", "Point 2"],
-      "notes": "Speaker notes for introduction"
-    },
-    {
-      "title": "Main Topic",
-      "content": ["Detail 1", "Detail 2", "Detail 3"]
-    }
-  ],
-  "title": "My Presentation",
-  "theme": "default",
-  "include_images": true
-}
-```
-
-### Presentation Management
-- `GET /api/v1/presentations/{presentation_id}` - Retrieve presentation
-- `DELETE /api/v1/presentations/{presentation_id}` - Delete presentation
-
-## Configuration
-
-Edit `.env` file to configure:
-
-```env
-# Application Settings
-APP_NAME="AI Presentation Generator"
-DEBUG=true
-
-# API Configuration
-API_HOST=0.0.0.0
-API_PORT=8000
-
-# AI Service Configuration
-OPENAI_API_KEY=your_openai_api_key_here
-ANTHROPIC_API_KEY=your_anthropic_api_key_here
-
-# File Upload Settings
-MAX_FILE_SIZE=10485760  # 10MB in bytes
-ALLOWED_FILE_TYPES=.pdf,.docx,.txt,.md
-
-# Database (optional)
-DATABASE_URL=postgresql://user:password@localhost/dbname
-```
-
-## Usage Examples
-
-### Using curl
-
-#### Document Upload
+### Document Upload
 ```bash
 curl -X POST "http://localhost:8000/api/v1/presentations/document" \
-  -F "file=@document.pdf" \
-  -F "title=My Presentation" \
-  -F "additional_text=Make it engaging" \
-  -F "max_slides=15"
+  -F "file=@report.pdf" \
+  -F "title=Quarterly Report" \
+  -F "max_slides=10"
 ```
 
-#### Prompt-Based
+### Prompt
 ```bash
 curl -X POST "http://localhost:8000/api/v1/presentations/prompt" \
-  -F "prompt=Introduction to machine learning algorithms" \
-  -F "title=ML Algorithms Overview" \
-  -F "max_slides=12"
+  -F "prompt=Benefits of renewable energy" \
+  -F "max_slides=8" \
+  -F "target_audience=investors"
 ```
 
-#### Outline-Based
+### Outline
 ```bash
 curl -X POST "http://localhost:8000/api/v1/presentations/outline" \
   -H "Content-Type: application/json" \
   -d '{
     "outline": [
-      {"title": "Slide 1", "content": ["Content 1"]},
-      {"title": "Slide 2", "content": ["Content 2"]}
+      {"title": "Introduction", "content": ["Point 1", "Point 2"]},
+      {"title": "Main Topic", "content": ["Detail 1", "Detail 2"]}
     ],
-    "title": "My Outline Presentation"
+    "title": "My Presentation"
   }'
 ```
 
-### Using Python requests
-
-```python
-import requests
-
-# Document upload
-with open('document.pdf', 'rb') as f:
-    response = requests.post(
-        'http://localhost:8000/api/v1/presentations/document',
-        files={'file': f},
-        data={
-            'title': 'My Presentation',
-            'additional_text': 'Add engaging content',
-            'max_slides': 10
-        }
-    )
-
-# Prompt-based
-response = requests.post(
-    'http://localhost:8000/api/v1/presentations/prompt',
-    data={
-        'prompt': 'Benefits of cloud computing',
-        'title': 'Cloud Computing Benefits',
-        'max_slides': 8
+### Response Format
+```json
+{
+  "presentation_id": "pres_a1b2c3d4",
+  "title": "Quarterly Report",
+  "slides": [
+    {
+      "slide_number": 1,
+      "title": "Introduction",
+      "content": ["Key point 1", "Key point 2"],
+      "notes": "Speaker notes here",
+      "layout": "title"
     }
-)
+  ],
+  "total_slides": 8,
+  "generation_method": "document",
+  "table_of_contents": ["Introduction", "Overview", "..."],
+  "created_at": "2026-03-01T10:00:00"
+}
 ```
 
-## Development
+## Configuration
 
-### Running Tests
+Set in `.env`:
+
+```env
+OPENAI_API_KEY=sk-...          # Required for LLM pipeline
+LLM_MODEL=gpt-4o-mini          # Default model
+LLM_TEMPERATURE=0.7            # Default temperature
+LLM_MAX_TOKENS=2000            # Default max tokens
+DEBUG=false                     # Debug mode
+```
+
+## Pipeline Architecture
+
+```
+┌─────────────┐     ┌──────────────┐     ┌─────────────────────┐
+│  Endpoint   │────▶│  Stage 1     │────▶│  Stage 2/3          │
+│  (FastAPI)  │     │  LLM Analyse │     │  Parallel Slides    │
+└─────────────┘     └──────────────┘     │  (asyncio.gather)   │
+                                          └─────────────────────┘
+                                                    │
+                                          ┌─────────┼─────────┐
+                                          ▼         ▼         ▼
+                                       Slide 1   Slide 2   Slide N
+                                       (LLM)     (LLM)     (LLM)
+```
+
+- **Fallback**: If `OPENAI_API_KEY` is not set, all generators degrade gracefully to stub/direct-mapping output.
+- **JSON mode**: All LLM calls use `response_format={"type": "json_object"}` with Pydantic validation.
+- **Retry**: Single automatic retry on LLM failure.
+
+## Testing
+
 ```bash
 pytest tests/
 ```
 
-### Code Formatting
-```bash
-black app/
-flake8 app/
-```
+## Key Dependencies
 
-### Adding New Features
-
-1. **New AI Service**: Extend `BasePresentationGenerator` in `app/services/presentation_generator.py`
-2. **New File Formats**: Update `DocumentProcessor` in `app/services/document_processor.py`
-3. **New Validators**: Add to `app/utils/validators.py`
-4. **New Endpoints**: Add to `app/api/endpoints/presentations.py`
-
-## Production Deployment
-
-### Docker
-```dockerfile
-FROM python:3.11-slim
-
-WORKDIR /app
-COPY requirements.txt .
-RUN pip install -r requirements.txt
-
-COPY app/ ./app/
-COPY .env .
-
-EXPOSE 8000
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
-```
-
-### Environment Variables for Production
-- Set `DEBUG=false`
-- Configure proper CORS origins
-- Set up proper database connection
-- Configure AI service API keys
-- Set up file storage (S3, etc.)
-
-## API Documentation
-
-Once the server is running, visit:
-- **Swagger UI**: http://localhost:8000/docs
-- **ReDoc**: http://localhost:8000/redoc
-
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Add tests
-5. Submit a pull request
+| Package | Purpose |
+|---|---|
+| `fastapi` + `uvicorn` | Web framework + ASGI server |
+| `openai` | LLM API client |
+| `pydantic` + `pydantic-settings` | Data validation + config |
+| `marker-pdf` | PDF → Markdown extraction |
+| `python-pptx` | PPTX generation (future) |
 
 ## License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
-
-## Support
-
-For issues and questions:
-- Check the API documentation at `/docs`
-- Review the example requests above
-- Create an issue in the repository
-
-## Roadmap
-
-- [ ] Database integration for presentation storage
-- [ ] Real AI service integration (OpenAI, Anthropic)
-- [ ] Template system for different presentation styles
-- [ ] Image generation and integration
-- [ ] Batch processing capabilities
-- [ ] User authentication and management
-- [ ] Presentation sharing and collaboration
-- [ ] Export to multiple formats (PDF, PowerPoint, Google Slides)
+MIT

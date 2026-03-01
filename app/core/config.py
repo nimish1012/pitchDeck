@@ -1,6 +1,10 @@
 import os
 from typing import List
-from pydantic import BaseSettings
+
+try:
+    from pydantic_settings import BaseSettings
+except ImportError:
+    from pydantic import BaseSettings
 
 class Settings(BaseSettings):
     """Application settings"""
@@ -19,9 +23,14 @@ class Settings(BaseSettings):
     max_file_size: int = 10 * 1024 * 1024  # 10MB
     allowed_file_types: List[str] = [".pdf", ".docx", ".txt", ".md"]
     
-    # AI Service Configuration (replace with your actual AI service)
+    # AI Service Configuration
     openai_api_key: str = ""
-    anthropic_api_key: str = ""
+    
+    # LLM Pipeline Configuration
+    llm_provider: str = "openai"
+    llm_model: str = "gpt-4o-mini"
+    llm_temperature: float = 0.7
+    llm_max_tokens: int = 2000
     
     # Presentation Templates
     template_dir: str = "app/static/templates"
