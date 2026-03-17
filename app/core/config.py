@@ -25,9 +25,11 @@ class Settings(BaseSettings):
     
     # AI Service Configuration
     openai_api_key: str = ""
+    google_api_key: str = ""
+    vllm_api_base: str = "http://localhost:8000/v1"
     
     # LLM Pipeline Configuration
-    llm_provider: str = "openai"
+    llm_provider: str = "openai"  # Options: openai, google, vllm
     llm_model: str = "gpt-4o-mini"
     llm_temperature: float = 0.7
     llm_max_tokens: int = 2000
