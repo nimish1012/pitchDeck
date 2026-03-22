@@ -1,32 +1,47 @@
 from fastapi import APIRouter
-from datetime import datetime
+from datetime import datetime, timezone
+
+from app.core.config import settings
 
 router = APIRouter()
 
+
 @router.get("/health")
 async def health_check():
-    """Health check endpoint"""
+    """Health check endpoint."""
     return {
         "status": "healthy",
-        "timestamp": datetime.utcnow().isoformat(),
-        "service": "AI Presentation Generator API",
-        "version": "1.0.0"
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "service": settings.app_name,
+        "version": settings.app_version,
     }
+
 
 @router.get("/status")
 async def get_status():
-    """Detailed status endpoint"""
+    """Detailed operational status."""
     return {
         "status": "operational",
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "config": {
+            "llm_provider": settings.llm_provider,
+            "llm_model": settings.llm_model,
+            "redis": "enabled" if settings.use_redis else "in-memory",
+            "image_provider": settings.image_provider,
+        },
         "endpoints": {
-            "document_presentation": "available",
-            "prompt_presentation": "available", 
-            "outline_presentation": "available"
+            "generate": "POST /api/v1/generate",
+            "stream": "GET /api/v1/generate/{id}/stream",
+            "poll": "GET /api/v1/generate/{id}",
+            "delete": "DELETE /api/v1/generate/{id}",
+            "list": "GET /api/v1/generations",
         },
         "features": {
-            "file_upload": "available",
-            "ai_generation": "available",
-            "multiple_formats": "available"
-        }
+            "sse_streaming": True,
+            "parallel_slide_gen": True,
+            "image_generation": settings.image_provider != "none",
+            "dynamic_layouts": True,
+            "token_budgeting": True,
+            "retry_mechanism": True,
+        },
     }

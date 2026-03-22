@@ -1,257 +1,211 @@
 """
-Prompt Templates for the 3-stage presentation generation pipeline.
+Prompt Templates for the Gamma-style presentation generation pipeline.
 
-Stage 1: Prompt Analysis — extract intent, PPT type, slide count
-Stage 2: Outline + TOC — create detailed slide outlines
-Stage 3: Slide Content — generate rich content for each individual slide
+Pipeline stages:
+  Step 1  — ANALYSE    → extract topic, intent, audience, complexity
+  Step 2  — OUTLINE    → structured slide outline with image/layout hints
+  Step 3  — SLIDE GEN  → parallel per-slide content generation (density-aware)
 """
 
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#  STEP 1 — ANALYSE
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-# ──────────────────────────────────────────────
-#  STAGE 1 — Prompt Analysis
-# ──────────────────────────────────────────────
-
-ANALYSIS_SYSTEM_PROMPT = """\
-You are an expert presentation strategist. Your job is to analyse a user's \
-request and determine the best way to structure a presentation.
+ANALYSE_SYSTEM_PROMPT = """\
+You are an expert presentation strategist. Analyse the user's request and
+extract structured metadata needed to plan a slide deck.
 
 You MUST respond with a JSON object using this exact schema:
 {
+  "topic": "string — the core topic",
+  "intent": "string — what the presenter wants to achieve",
+  "audience": "string — target audience (infer if not specified)",
+  "tone": "string — formal / casual / academic / inspirational",
+  "complexity": "string — basic | intermediate | advanced",
+  "num_slides": integer,
   "title": "string — a compelling presentation title",
-  "ppt_type": "string — one of: informational, persuasive, educational, pitch",
-  "target_audience": "string — who this presentation is aimed at",
-  "recommended_slides": integer — optimal number of slides (between 3 and 30),
-  "slide_intents": [
-    {
-      "slide_number": integer,
-      "intent": "string — one-line description of what this slide should achieve"
-    }
-  ]
+  "presentation_type": "string — informational | persuasive | educational | pitch"
 }
 
-Guidelines:
-- Infer the best presentation type from the user's intent.
-- Choose a slide count that covers the topic well without being too sparse or verbose.
-- Each slide_intent should be specific and actionable, not generic.
-- The first slide should always be a title/introduction slide.
-- The last slide should be a conclusion, summary, or call-to-action slide.
+Rules:
+- If the user specified an audience, use it verbatim; otherwise infer.
+- num_slides must be between 3 and 50. Respect the user's requested count.
+- The title should be engaging and specific.
 - Return ONLY the JSON object, no extra text.
 """
 
-ANALYSIS_USER_PROMPT = """\
-Create a presentation plan for the following request:
+ANALYSE_USER_PROMPT = """\
+Plan a slide deck for:
 
 "{prompt}"
 
-The user has requested a maximum of {max_slides} slides.
-Target audience: {target_audience}
+Requested slides: {num_slides}
+Audience hint: {audience}
+Tone hint: {tone}
 """
 
 
-# ──────────────────────────────────────────────
-#  STAGE 2 — Outline + Table of Contents
-# ──────────────────────────────────────────────
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#  STEP 2 — OUTLINE
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 OUTLINE_SYSTEM_PROMPT = """\
-You are an expert presentation content architect. Given an analysis of a \
-presentation request, create a detailed outline and table of contents.
+You are an expert presentation architect. Given an analysis of the user's
+request, produce a structured slide-by-slide outline.
 
 You MUST respond with a JSON object using this exact schema:
 {
-  "table_of_contents": [
-    "string — section/slide title"
-  ],
-  "slide_outlines": [
+  "slides": [
     {
-      "slide_number": integer,
+      "slide_id": integer (1-based),
       "title": "string — clear, engaging slide title",
-      "bullet_points": [
-        "string — key point to cover on this slide"
-      ],
-      "speaker_notes_hint": "string — brief guidance for speaker notes",
-      "layout": "string — one of: title, content, two_column, comparison, quote, image_focus, summary"
+      "key_points": ["string — key point to cover"],
+      "image_required": boolean,
+      "image_type": "string — diagram | illustration | photo | chart | icon | none",
+      "layout_hint": "string — text | image_left | image_right | full_bleed | two_column | comparison | title | section_header | quote | summary"
+    }
+  ],
+  "image_plan": [
+    {
+      "slide_id": integer,
+      "description": "string — what the image should depict",
+      "type": "string — diagram | illustration | photo | chart | icon"
+    }
+  ],
+  "layout_plan": [
+    {
+      "slide_id": integer,
+      "layout": "string — chosen layout",
+      "reason": "string — why this layout fits"
     }
   ]
 }
 
-Guidelines:
-- Each slide should have 3-5 bullet points.
-- Bullet points should be concise but substantive (not vague).
-- Speaker notes hints guide what the presenter should elaborate on.
-- Choose layouts that best fit the content type.
-- Ensure logical flow between slides.
-- Return ONLY the JSON object, no extra text.
+Rules:
+- Slide 1 must be a title slide.
+- Last slide must be a summary / conclusion / call-to-action.
+- Each slide should have 3–6 key_points.
+- Set image_required=true only when an image genuinely adds value.
+- image_type must match the content (e.g. chart for data, diagram for processes).
+- Ensure logical flow and no repetition between slides.
+- Return ONLY the JSON object.
 """
 
 OUTLINE_USER_PROMPT = """\
-Create a detailed outline for this presentation:
+Create a slide outline for this presentation:
 
 Title: {title}
-Type: {ppt_type}
-Target Audience: {target_audience}
-Total Slides: {recommended_slides}
-
-Slide intents:
-{slide_intents_text}
+Type: {presentation_type}
+Audience: {audience}
+Tone: {tone}
+Complexity: {complexity}
+Slide count: {num_slides}
 """
 
 
-# ──────────────────────────────────────────────
-#  STAGE 3 — Individual Slide Content
-# ──────────────────────────────────────────────
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#  STEP 3 — PER-SLIDE CONTENT GENERATION
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 SLIDE_SYSTEM_PROMPT = """\
-You are an expert presentation slide writer. Given an outline for a single \
-slide and the overall presentation context, generate the final slide content.
+You are an expert slide content writer. Generate polished, presentation-ready
+content for a SINGLE slide.
 
 You MUST respond with a JSON object using this exact schema:
 {
-  "slide_number": integer,
+  "slide_id": integer,
   "title": "string — polished slide title",
-  "content": [
-    "string — each bullet point or content block for the slide"
-  ],
-  "notes": "string — detailed speaker notes (2-4 sentences)",
-  "layout": "string — one of: title, content, two_column, comparison, quote, image_focus, summary"
-}
-
-Guidelines:
-- Content items should be clear, concise, and presentation-ready.
-- Use strong action verbs and avoid filler words.
-- Speaker notes should provide additional context the presenter can use.
-- Keep each content item to 1-2 lines maximum.
-- Make the content engaging and informative for the target audience.
-- Return ONLY the JSON object, no extra text.
-"""
-
-SLIDE_USER_PROMPT = """\
-Generate the final content for this slide:
-
-Presentation: "{presentation_title}" ({ppt_type})
-Target Audience: {target_audience}
-
-Slide Outline:
-- Slide Number: {slide_number}
-- Title: {slide_title}
-- Key Points to Cover: {bullet_points}
-- Speaker Notes Guidance: {speaker_notes_hint}
-- Suggested Layout: {layout}
-"""
-
-
-# ──────────────────────────────────────────────
-#  OUTLINE FLOW — Stage 1: Analyse Outline
-# ──────────────────────────────────────────────
-
-OUTLINE_ANALYSIS_SYSTEM_PROMPT = """\
-You are an expert presentation strategist. The user has provided a structured \
-outline for a presentation. Analyse the outline to understand their intent and \
-determine the best way to generate professional slide content.
-
-You MUST respond with a JSON object using this exact schema:
-{
-  "title": "string — a compelling presentation title (use the user-provided one if given)",
-  "ppt_type": "string — one of: informational, persuasive, educational, pitch",
-  "target_audience": "string — who this presentation is aimed at",
-  "theme_suggestion": "string — a theme or tone for the presentation",
-  "total_slides": integer
-}
-
-Guidelines:
-- Infer the presentation type and audience from the outline content.
-- If the user already provided a title, use it as-is.
-- Be concise. Return ONLY the JSON object, no extra text.
-"""
-
-OUTLINE_ANALYSIS_USER_PROMPT = """\
-Analyse this presentation outline:
-
-Title: {title}
-Number of slides: {num_slides}
-
-Outline:
-{outline_text}
-"""
-
-
-# ──────────────────────────────────────────────
-#  OUTLINE FLOW — Stage 2: Generate Slide Content
-# ──────────────────────────────────────────────
-
-OUTLINE_SLIDE_SYSTEM_PROMPT = """\
-You are an expert slide content writer. The user has provided an outline item \
-for a specific slide. Generate professional, polished slide content that stays \
-FAITHFUL to the user's original structure while enriching it.
-
-You MUST respond with a JSON object using this exact schema:
-{
-  "slide_number": integer,
-  "title": "string — polished version of the user's slide title",
   "content": [
     "string — each bullet point or content block"
   ],
-  "notes": "string — speaker notes (2-4 sentences)",
-  "layout": "string — one of: title, content, two_column, comparison, quote, image_focus, summary"
+  "image_prompt": "string or null — if this slide needs an image, provide a \
+detailed prompt for a diffusion model. Use descriptive visual language. \
+If no image needed, set null.",
+  "layout": "string — text | image_left | image_right | full_bleed | two_column | comparison | title | section_header | quote | summary",
+  "notes": "string — speaker notes",
+  "image_type": "string — diagram | illustration | photo | chart | icon | none"
 }
 
-Guidelines:
-- Keep the user's original slide title and intent — only polish the wording.
-- Expand the user's content points into clear, presentation-ready bullet points.
-- If the user provided only a title with no content, generate 3-5 relevant points.
-- Speaker notes should provide talking points the presenter can use.
-- Return ONLY the JSON object, no extra text.
+Rules:
+- Content items must be clear, concise, and presentation-ready.
+- Use strong action verbs; avoid filler.
+- Each bullet should be 1–2 lines max.
+- Speaker notes add context the presenter elaborates on.
+- STRICTLY respect the content density constraints below.
+- If image_prompt is provided it must be descriptive enough for a diffusion
+  model to produce a clean, professional, presentation-friendly image.
+- Return ONLY the JSON object.
 """
 
-OUTLINE_SLIDE_USER_PROMPT = """\
-Generate polished slide content for this outline item:
+SLIDE_USER_PROMPT = """\
+Generate slide content for:
 
-Presentation: "{presentation_title}" ({ppt_type})
-Target Audience: {target_audience}
+Presentation: "{title}" ({presentation_type})
+Audience: {audience} | Tone: {tone}
 
-Slide {slide_number} of {total_slides}:
-- User's Title: {slide_title}
-- User's Content: {user_content}
-- User's Notes: {user_notes}
+Slide {slide_id} of {total_slides}:
+  Title: {slide_title}
+  Key points to cover: {key_points}
+  Image needed: {image_required}
+  Image type: {image_type}
+  Layout hint: {layout_hint}
+
+{budget_constraints}
+
+IMPORTANT — Avoid repeating content from other slides. This slide's unique
+purpose: {slide_title}.
+Previous slide titles for context (do NOT repeat their content):
+{context_titles}
 """
 
 
-# ──────────────────────────────────────────────
-#  DOCUMENT FLOW — Stage 1: Analyse Document
-# ──────────────────────────────────────────────
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#  LEGACY PROMPTS (kept for backward compatibility with old endpoints)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+# Old Stage 1 — Prompt Analysis
+ANALYSIS_SYSTEM_PROMPT = ANALYSE_SYSTEM_PROMPT
+ANALYSIS_USER_PROMPT = ANALYSE_USER_PROMPT
+
+# Old Stage 2 — Outline
+OUTLINE_ANALYSIS_SYSTEM_PROMPT = OUTLINE_SYSTEM_PROMPT
+OUTLINE_ANALYSIS_USER_PROMPT = OUTLINE_USER_PROMPT
+
+# Old Stage 3 — Slide
+OUTLINE_SLIDE_SYSTEM_PROMPT = SLIDE_SYSTEM_PROMPT
+OUTLINE_SLIDE_USER_PROMPT = SLIDE_USER_PROMPT
+
+# Document flow (unchanged names for document_processor compatibility)
 DOCUMENT_ANALYSIS_SYSTEM_PROMPT = """\
-You are an expert presentation strategist. You have been given extracted text \
-from a document. Analyse it and determine how to split it into presentation \
-slides.
+You are an expert presentation strategist. You have been given extracted text
+from a document. Analyse it and determine how to split it into presentation slides.
 
 You MUST respond with a JSON object using this exact schema:
 {
-  "title": "string — a compelling presentation title derived from the document",
-  "ppt_type": "string — one of: informational, persuasive, educational, pitch",
+  "title": "string — compelling presentation title derived from the document",
+  "ppt_type": "string — informational | persuasive | educational | pitch",
   "target_audience": "string — inferred target audience",
   "sections": [
     {
       "slide_number": integer,
       "section_title": "string — title for this slide",
-      "source_excerpt": "string — the key excerpt or summary from the document for this slide"
+      "source_excerpt": "string — key excerpt or summary for this slide"
     }
   ]
 }
 
-Guidelines:
-- Break the document into logical sections that each become one slide.
-- The first section should always be a title/introduction slide.
-- The last section should be a conclusion or summary slide.
-- Each section_title should be clear and presentation-ready.
-- source_excerpt should capture the essential information for that slide.
-- Do NOT include more sections than max_slides.
-- Return ONLY the JSON object, no extra text.
+Rules:
+- Break the document into logical sections, each becoming one slide.
+- First section = title/introduction slide.
+- Last section = conclusion / summary slide.
+- Do NOT exceed max_slides.
+- Return ONLY the JSON object.
 """
 
 DOCUMENT_ANALYSIS_USER_PROMPT = """\
-Analyse the following document content and break it into presentation sections:
+Analyse the following document and break it into presentation sections:
 
-Document Title (if provided): {title}
+Document Title: {title}
 Maximum slides: {max_slides}
 Additional instructions: {additional_text}
 
@@ -259,42 +213,5 @@ Additional instructions: {additional_text}
 {document_content}
 """
 
-
-# ──────────────────────────────────────────────
-#  DOCUMENT FLOW — Stage 2: Generate Slide Content
-# ──────────────────────────────────────────────
-
-DOCUMENT_SLIDE_SYSTEM_PROMPT = """\
-You are an expert slide content writer. Generate a polished presentation slide \
-from a section of a document. The slide should distil the source material into \
-clear, concise, presentation-ready content.
-
-You MUST respond with a JSON object using this exact schema:
-{
-  "slide_number": integer,
-  "title": "string — polished slide title",
-  "content": [
-    "string — each bullet point or content block"
-  ],
-  "notes": "string — speaker notes with additional context (2-4 sentences)",
-  "layout": "string — one of: title, content, two_column, comparison, quote, image_focus, summary"
-}
-
-Guidelines:
-- Distil the source material into 3-5 concise bullet points.
-- Do NOT copy text verbatim — rephrase for presentation clarity.
-- Content should be self-contained and understandable without the original document.
-- Speaker notes should include details the presenter can elaborate on.
-- Return ONLY the JSON object, no extra text.
-"""
-
-DOCUMENT_SLIDE_USER_PROMPT = """\
-Generate slide content from this document section:
-
-Presentation: "{presentation_title}" ({ppt_type})
-Target Audience: {target_audience}
-
-Slide {slide_number} of {total_slides}:
-- Section Title: {section_title}
-- Source Material: {source_excerpt}
-"""
+DOCUMENT_SLIDE_SYSTEM_PROMPT = SLIDE_SYSTEM_PROMPT
+DOCUMENT_SLIDE_USER_PROMPT = SLIDE_USER_PROMPT

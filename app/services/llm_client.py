@@ -1,15 +1,23 @@
 """
-LLM Client - Async OpenAI wrapper for the presentation generation pipeline.
+LLM Client — Async multi-provider wrapper with JSON mode + streaming.
 
-Provides structured JSON output via multiple providers:
-- OpenAI (default)
-- Google (Gemini)
-- vLLM (Local/Remote OpenAI-compatible endpoint)
+Supports:
+  • OpenAI  (default)
+  • Google  (Gemini)
+  • vLLM    (OpenAI-compatible endpoint)
+
+New in v2:
+  • Streaming support via call_llm_stream()
+  • Exponential-backoff retry
+  • Per-call max_tokens override (for token budgeting)
 """
 
+from __future__ import annotations
+
+import asyncio
 import json
 import logging
-from typing import Any, Dict, Optional, Type, TypeVar
+from typing import Any, AsyncIterator, Dict, Optional, Type, TypeVar
 
 from openai import AsyncOpenAI
 from pydantic import BaseModel
@@ -22,7 +30,7 @@ T = TypeVar("T", bound=BaseModel)
 
 
 class LLMClient:
-    """Async client wrapper for the presentation pipeline across multiple providers."""
+    """Async LLM client for the presentation pipeline."""
 
     def __init__(self):
         self.provider = settings.llm_provider.lower()
@@ -30,30 +38,32 @@ class LLMClient:
         self.temperature = settings.llm_temperature
         self.max_tokens = settings.llm_max_tokens
 
-        # Initialize clients based on provider
         if self.provider == "openai":
             if not settings.openai_api_key:
-                raise ValueError("OPENAI_API_KEY is not set. Add it to your .env file.")
-            self.openai_client = AsyncOpenAI(api_key=settings.openai_api_key)
-            
+                raise ValueError("OPENAI_API_KEY is not set.")
+            self.client = AsyncOpenAI(api_key=settings.openai_api_key)
+
         elif self.provider == "vllm":
-            # vLLM provides an OpenAI compatible endpoint
-            self.openai_client = AsyncOpenAI(
-                api_key="EMPTY", # vLLM often doesn't require an API key
-                base_url=settings.vllm_api_base
+            self.client = AsyncOpenAI(
+                api_key="EMPTY",
+                base_url=settings.vllm_api_base,
             )
-            
+
         elif self.provider == "google":
             if not settings.google_api_key:
-                raise ValueError("GOOGLE_API_KEY is not set. Add it to your .env file.")
+                raise ValueError("GOOGLE_API_KEY is not set.")
             try:
                 import google.generativeai as genai
                 genai.configure(api_key=settings.google_api_key)
                 self.google_client = genai.GenerativeModel(self.model)
             except ImportError:
-                raise ImportError("google-generativeai is required for Google provider. Install it using 'pip install google-generativeai'")
+                raise ImportError("google-generativeai required for Google provider")
         else:
             raise ValueError(f"Unsupported LLM provider: {self.provider}")
+
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    #  JSON mode call (structured output)
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
     async def call_llm_json(
         self,
@@ -63,25 +73,31 @@ class LLMClient:
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
     ) -> T:
-        """
-        Make a chat completion call with JSON mode enabled.
-        Parses the response into the given Pydantic model.
-        """
+        """Structured JSON call with automatic retry + backoff."""
         temp = temperature if temperature is not None else self.temperature
         tokens = max_tokens if max_tokens is not None else self.max_tokens
-        
-        try:
-            return await self._call_provider_json(system_prompt, user_prompt, response_model, temp, tokens)
-        except Exception as e:
-            logger.warning(f"LLM JSON call failed with {self.provider}: {e}. Retrying once...")
-            try:
-                # Retry once
-                return await self._call_provider_json(system_prompt, user_prompt, response_model, temp, tokens)
-            except Exception as retry_err:
-                logger.error(f"LLM JSON retry also failed: {retry_err}")
-                raise
 
-    async def _call_provider_json(
+        last_err: Exception | None = None
+        for attempt in range(1, settings.max_retries + 2):  # +1 for initial try
+            try:
+                return await self._call_json_inner(
+                    system_prompt, user_prompt, response_model, temp, tokens,
+                )
+            except Exception as e:
+                last_err = e
+                if attempt <= settings.max_retries:
+                    wait = settings.retry_backoff_base * (2 ** (attempt - 1))
+                    logger.warning(
+                        f"LLM call attempt {attempt} failed ({e}), "
+                        f"retrying in {wait:.1f}s …"
+                    )
+                    await asyncio.sleep(wait)
+                else:
+                    logger.error(f"LLM call failed after {attempt} attempts: {e}")
+
+        raise last_err  # type: ignore[misc]
+
+    async def _call_json_inner(
         self,
         system_prompt: str,
         user_prompt: str,
@@ -89,9 +105,8 @@ class LLMClient:
         temperature: float,
         max_tokens: int,
     ) -> T:
-        
-        if self.provider in ["openai", "vllm"]:
-            response = await self.openai_client.chat.completions.create(
+        if self.provider in ("openai", "vllm"):
+            response = await self.client.chat.completions.create(
                 model=self.model,
                 messages=[
                     {"role": "system", "content": system_prompt},
@@ -102,34 +117,114 @@ class LLMClient:
                 response_format={"type": "json_object"},
             )
             raw = response.choices[0].message.content.strip()
-            
+
         elif self.provider == "google":
-            # Google API uses a different prompt structure and generation config
             import google.generativeai as genai
-            
             prompt = f"{system_prompt}\n\n{user_prompt}"
-            
-            generation_config = genai.GenerationConfig(
+            gen_config = genai.GenerationConfig(
                 temperature=temperature,
                 max_output_tokens=max_tokens,
-                response_mime_type="application/json"
+                response_mime_type="application/json",
             )
-            
-            # Note: The official python SDK has an async generating method: `generate_content_async`
             response = await self.google_client.generate_content_async(
                 contents=prompt,
-                generation_config=generation_config
+                generation_config=gen_config,
             )
             raw = response.text.strip()
-            
         else:
-            raise ValueError(f"Provider {self.provider} not implemented for JSON calls")
-            
+            raise ValueError(f"Provider {self.provider} not implemented")
+
         parsed = json.loads(raw)
         return response_model.model_validate(parsed)
 
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    #  Streaming call (token-by-token)
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-# Singleton instance — created lazily to avoid crash when key is missing
+    async def call_llm_stream(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        temperature: Optional[float] = None,
+        max_tokens: Optional[int] = None,
+    ) -> AsyncIterator[str]:
+        """
+        Yield tokens as they arrive.  Only supported on OpenAI / vLLM.
+        Useful for streaming partial slide content to the SSE endpoint.
+        """
+        temp = temperature if temperature is not None else self.temperature
+        tokens = max_tokens if max_tokens is not None else self.max_tokens
+
+        if self.provider not in ("openai", "vllm"):
+            # Fallback: non-streaming call, yield all at once
+            response = await self.call_llm_json(
+                system_prompt, user_prompt, BaseModel, temp, tokens,
+            )
+            yield response.model_dump_json()
+            return
+
+        stream = await self.client.chat.completions.create(
+            model=self.model,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            temperature=temp,
+            max_tokens=tokens,
+            response_format={"type": "json_object"},
+            stream=True,
+        )
+
+        async for chunk in stream:
+            delta = chunk.choices[0].delta
+            if delta.content:
+                yield delta.content
+
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    #  Raw call (no parsing)
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+    async def call_llm_raw(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        temperature: Optional[float] = None,
+        max_tokens: Optional[int] = None,
+    ) -> str:
+        """Return raw string response (no JSON parsing)."""
+        temp = temperature if temperature is not None else self.temperature
+        tokens = max_tokens if max_tokens is not None else self.max_tokens
+
+        if self.provider in ("openai", "vllm"):
+            response = await self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                temperature=temp,
+                max_tokens=tokens,
+            )
+            return response.choices[0].message.content.strip()
+
+        elif self.provider == "google":
+            import google.generativeai as genai
+            prompt = f"{system_prompt}\n\n{user_prompt}"
+            gen_config = genai.GenerationConfig(
+                temperature=temp,
+                max_output_tokens=tokens,
+            )
+            response = await self.google_client.generate_content_async(
+                contents=prompt,
+                generation_config=gen_config,
+            )
+            return response.text.strip()
+
+        raise ValueError(f"Provider {self.provider} not implemented")
+
+
+# ── Singleton ──────────────────────────────────
+
 _llm_client: Optional[LLMClient] = None
 
 
